@@ -37,15 +37,50 @@
 </template>
 
 <script setup lang="ts">
+import { importMpAccounts } from '~/store/v2/info';
 import { getAllInfo, type MpAccount } from '~/store/v2/info';
 
 // 已缓存的公众号信息
-const cachedAccountInfos = await getAllInfo();
+const cachedAccountInfos = ref<MpAccount[]>(await getAllInfo());
+
+async function hydrateLocalAccounts() {
+  try {
+    const response = await $fetch<{
+      list: Array<{ fakeid: string; nickname: string; articles: number }>;
+    }>('/api/web/local/accounts');
+
+    if (!response?.list?.length) {
+      return;
+    }
+
+    const existingIds = new Set(cachedAccountInfos.value.map(item => item.fakeid));
+    const toImport = response.list
+      .filter(item => item.fakeid && !existingIds.has(item.fakeid))
+      .map(item => ({
+        fakeid: item.fakeid,
+        nickname: item.nickname,
+        round_head_img: '',
+        completed: false,
+        count: item.articles,
+        articles: item.articles,
+        total_count: item.articles,
+      }));
+
+    if (toImport.length > 0) {
+      await importMpAccounts(toImport);
+      cachedAccountInfos.value = await getAllInfo();
+    }
+  } catch (error) {
+    console.warn('hydrate local accounts failed', error);
+  }
+}
+
+await hydrateLocalAccounts();
+
 const sortedAccountInfos = computed(() => {
-  cachedAccountInfos.sort((a, b) => {
+  return [...cachedAccountInfos.value].sort((a, b) => {
     return a.articles > b.articles ? -1 : 1;
   });
-  return cachedAccountInfos;
 });
 
 const selected = defineModel<MpAccount | undefined>();

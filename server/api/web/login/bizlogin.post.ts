@@ -1,6 +1,6 @@
 import dayjs from 'dayjs';
 import { request } from '#shared/utils/request';
-import { getCookieFromResponse, getCookiesFromRequest } from '~/server/utils/CookieStore';
+import { getCookieFromResponse, getCookiesFromRequest, getLatestAuthKey } from '~/server/utils/CookieStore';
 import { proxyMpRequest } from '~/server/utils/proxy-request';
 
 export default defineEventHandler(async event => {
@@ -32,7 +32,7 @@ export default defineEventHandler(async event => {
   });
 
   // 从响应中取出唯一的 set-cookie (即上一步 `action=login` 标志所设置的 auth-key=xxx)
-  const authKey = getCookieFromResponse('auth-key', response);
+  const authKey = getCookieFromResponse('auth-key', response) || (await getLatestAuthKey());
   if (!authKey) {
     return {
       err: '登录失败，请稍后重试',

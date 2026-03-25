@@ -2,7 +2,8 @@
  * 退出登录接口
  */
 
-import { parseCookies } from 'h3';
+import dayjs from 'dayjs';
+import { parseCookies, setCookie } from 'h3';
 import { cookieStore, getTokenFromStore } from '~/server/utils/CookieStore';
 import { proxyMpRequest } from '~/server/utils/proxy-request';
 
@@ -28,6 +29,14 @@ export default defineEventHandler(async event => {
   if (authKey) {
     cookieStore.removeCookie(authKey);
   }
+
+  setCookie(event, 'auth-key', 'EXPIRED', {
+    path: '/',
+    expires: dayjs().subtract(1, 'day').toDate(),
+    httpOnly: true,
+    sameSite: 'lax',
+    secure: false,
+  });
 
   return {
     statusCode: response.status,

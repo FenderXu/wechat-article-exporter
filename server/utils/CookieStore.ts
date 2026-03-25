@@ -1,4 +1,7 @@
-import { H3Event, parseCookies } from 'h3';
+import { readdir, stat } from 'node:fs/promises';
+import path from 'node:path';
+import dayjs from 'dayjs';
+import { H3Event, parseCookies, setCookie } from 'h3';
 import { CookieKVValue, getMpCookie, setMpCookie } from '~/server/kv/cookie';
 
 // 表示一条 set-cookie 记录的解析结果
@@ -218,6 +221,71 @@ class CookieStore {
 
 export const cookieStore = new CookieStore();
 
+function getCookieDirectory() {
+  const base = process.env.NITRO_KV_BASE || '.data/kv';
+  return path.resolve(process.cwd(), base, 'cookie');
+}
+
+export async function getLatestAuthKey(): Promise<string | null> {
+  try {
+    const cookieDir = getCookieDirectory();
+    const entries = await readdir(cookieDir, { withFileTypes: true });
+    const files = await Promise.all(
+      entries
+        .filter(entry => entry.isFile() && !entry.name.startsWith('.'))
+        .map(async entry => {
+          const fullPath = path.join(cookieDir, entry.name);
+          const fileStat = await stat(fullPath);
+          return { name: entry.name, mtimeMs: fileStat.mtimeMs };
+        })
+    );
+
+    files.sort((a, b) => b.mtimeMs - a.mtimeMs);
+    return files[0]?.name || null;
+  } catch {
+    return null;
+  }
+}
+
+async function resolveAuthKey(event: H3Event): Promise<string | null> {
+  let authKey = getRequestHeader(event, 'X-Auth-Key');
+  if (authKey) {
+    const token = await cookieStore.getToken(authKey);
+    if (token) {
+      return authKey;
+    }
+  }
+
+  const cookies = parseCookies(event);
+  authKey = cookies['auth-key'];
+  if (authKey) {
+    const token = await cookieStore.getToken(authKey);
+    if (token) {
+      return authKey;
+    }
+  }
+
+  const fallbackAuthKey = await getLatestAuthKey();
+  if (!fallbackAuthKey) {
+    return null;
+  }
+
+  const fallbackToken = await cookieStore.getToken(fallbackAuthKey);
+  if (!fallbackToken) {
+    return null;
+  }
+
+  setCookie(event, 'auth-key', fallbackAuthKey, {
+    path: '/',
+    expires: dayjs().add(4, 'day').toDate(),
+    httpOnly: true,
+    sameSite: 'lax',
+    secure: false,
+  });
+
+  return fallbackAuthKey;
+}
+
 /**
  * 从 CookieStore 中获取 cookie 字符串
  *
@@ -225,28 +293,11 @@ export const cookieStore = new CookieStore();
  * @param event
  */
 export async function getCookieFromStore(event: H3Event): Promise<string | null> {
-  let cookie: string | null = null;
-
-  // 优先根据自定义的 X-Auth-Key 检索
-  let authKey = getRequestHeader(event, 'X-Auth-Key');
-  if (authKey) {
-    cookie = await cookieStore.getCookie(authKey);
-    if (cookie) {
-      return cookie;
-    }
+  const authKey = await resolveAuthKey(event);
+  if (!authKey) {
+    return null;
   }
-
-  // 从 cookie 中的 token 检索
-  const cookies = parseCookies(event);
-  authKey = cookies['auth-key'];
-  if (authKey) {
-    cookie = await cookieStore.getCookie(authKey);
-    if (cookie) {
-      return cookie;
-    }
-  }
-
-  return null;
+  return await cookieStore.getCookie(authKey);
 }
 
 /**
@@ -256,28 +307,11 @@ export async function getCookieFromStore(event: H3Event): Promise<string | null>
  * @param event
  */
 export async function getTokenFromStore(event: H3Event): Promise<string | null> {
-  let token: string | null = null;
-
-  // 优先根据自定义的 X-Auth-Key 检索
-  let authKey = getRequestHeader(event, 'X-Auth-Key');
-  if (authKey) {
-    token = await cookieStore.getToken(authKey);
-    if (token) {
-      return token;
-    }
+  const authKey = await resolveAuthKey(event);
+  if (!authKey) {
+    return null;
   }
-
-  // 从 cookie 中的 token 检索
-  const cookies = parseCookies(event);
-  authKey = cookies['auth-key'];
-  if (authKey) {
-    token = await cookieStore.getToken(authKey);
-    if (token) {
-      return token;
-    }
-  }
-
-  return null;
+  return await cookieStore.getToken(authKey);
 }
 
 /**

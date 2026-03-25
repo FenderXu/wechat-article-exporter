@@ -376,8 +376,41 @@ function restoreColumnState() {
 }
 
 async function refresh() {
+  await hydrateLocalAccounts();
   globalRowData = await getAllInfo();
   gridApi.value?.setGridOption('rowData', globalRowData);
+}
+
+async function hydrateLocalAccounts() {
+  try {
+    const response = await $fetch<{
+      list: Array<{ fakeid: string; nickname: string; articles: number }>;
+    }>('/api/web/local/accounts');
+
+    if (!response?.list?.length) {
+      return;
+    }
+
+    const existing = await getAllInfo();
+    const existingIds = new Set(existing.map(item => item.fakeid));
+    const toImport = response.list
+      .filter(item => item.fakeid && !existingIds.has(item.fakeid))
+      .map(item => ({
+        fakeid: item.fakeid,
+        nickname: item.nickname,
+        round_head_img: '',
+        completed: false,
+        count: item.articles,
+        articles: item.articles,
+        total_count: item.articles,
+      }));
+
+    if (toImport.length > 0) {
+      await importMpAccounts(toImport);
+    }
+  } catch (error) {
+    console.warn('hydrate local accounts failed', error);
+  }
 }
 
 async function updateRow(fakeid: string) {

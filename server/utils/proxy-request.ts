@@ -13,6 +13,9 @@ import { logRequest, logResponse } from '~/server/utils/logger';
  */
 export async function proxyMpRequest(options: RequestOptions) {
   const runtimeConfig = useRuntimeConfig();
+  const host = getRequestHeader(options.event, 'host') || '';
+  const isLocalHost = /^(127\.0\.0\.1|localhost)(:\d+)?$/i.test(host);
+  const cookieFlags = `${isLocalHost ? '' : ' Secure;'} HttpOnly; SameSite=Lax`;
 
   const headers = new Headers({
     Referer: 'https://mp.weixin.qq.com/',
@@ -63,7 +66,17 @@ export async function proxyMpRequest(options: RequestOptions) {
   // 处理登录请求的 uuid cookie
   if (options.action === 'start_login') {
     // 提取出 uuid 这个 cookie，并透传给客户端
-    setCookies = mpResponse.headers.getSetCookie().filter(cookie => cookie.startsWith('uuid='));
+    setCookies = mpResponse.headers
+      .getSetCookie()
+      .filter(cookie => cookie.startsWith('uuid='))
+      .map(cookie => {
+        const uuidMatch = cookie.match(/^uuid=([^;]+)/);
+        const uuidValue = uuidMatch?.[1];
+        if (!uuidValue) {
+          return cookie;
+        }
+        return `uuid=${uuidValue}; Path=/;${cookieFlags}`;
+      });
   }
 
   // 处理登录成功请求的 cookie
@@ -93,10 +106,10 @@ export async function proxyMpRequest(options: RequestOptions) {
       console.log('cookie 写入成功');
 
       setCookies = [
-        `auth-key=${authKey}; Path=/; Expires=${dayjs().add(4, 'days').toString()}; Secure; HttpOnly`,
+        `auth-key=${authKey}; Path=/; Expires=${dayjs().add(4, 'days').toUTCString()};${cookieFlags}`,
 
         // 登录成功后，删除浏览器的 uuid cookie
-        `uuid=EXPIRED; Path=/; Expires=${dayjs().subtract(1, 'days').toString()}; Secure; HttpOnly`,
+        `uuid=EXPIRED; Path=/; Expires=${dayjs().subtract(1, 'days').toUTCString()};${cookieFlags}`,
       ];
     } catch (error) {
       console.error('action(login) failed:', error);
